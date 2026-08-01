@@ -21,11 +21,13 @@ module HTTP
     def initialize: (Array[blocklist_rule] | String | nil entries, deny: blocklist_deny?) -> void
     def blocked_host?: (String host) -> bool
     def blocked_address?: (IPAddr address) -> bool
-    def validate!: (String host) -> String
+    def validate!: (String host, ?timeout: Numeric?) -> String
     def warn_proxy_incompatible: () -> void
 
     private
 
+    def resolve: (String host, Numeric? timeout) -> Array[String]
+    def resolve_within: (String host, Numeric timeout) -> Array[String]
     def normalize_host: (String host) -> String
   end
 

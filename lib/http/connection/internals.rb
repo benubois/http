@@ -47,7 +47,7 @@ module HTTP
 
         proxied = req.using_proxy?
         blocklist.warn_proxy_incompatible if proxied
-        address = blocklist.validate!(req.host)
+        address = blocklist.validate!(req.host, timeout: options.timeout_options[:connect_timeout])
 
         proxied ? req.socket_host : address
       end

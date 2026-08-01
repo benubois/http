@@ -16,6 +16,13 @@ class ::Pathname
           | [T] (?string | int mode, ?int perm, **untyped) { (::File) -> T } -> T
 end
 
+class ::Addrinfo
+  # Override: Ruby's Addrinfo.getaddrinfo accepts protocol, flags and a timeout
+  def self.getaddrinfo: (String? nodename, ?(String | Integer)? service, ?(Symbol | Integer)? family,
+                         ?(Symbol | Integer)? socktype, ?(Symbol | Integer)? protocol, ?Integer? flags,
+                         ?timeout: Numeric?) -> Array[Addrinfo]
+end
+
 # Stubs for external dependencies without RBS definitions
 
 module Addressable

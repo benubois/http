@@ -1558,6 +1558,21 @@ class HTTPConnectionTest < Minitest::Test
     assert_includes LOOPBACK_ADDRESSES, connect_to(blocklist: [IPAddr.new("10.0.0.0/8")])
   end
 
+  def test_connect_bounds_blocklist_resolution_with_the_connect_timeout
+    seen     = []
+    resolver = lambda do |*_args, **options|
+      seen << options[:timeout]
+      [Addrinfo.ip("93.184.216.34")]
+    end
+
+    Addrinfo.stub(:getaddrinfo, resolver) do
+      connect_to(blocklist: [IPAddr.new("10.0.0.0/8")])
+      connect_to(blocklist: [IPAddr.new("10.0.0.0/8")], timeout_options: { connect_timeout: 7 })
+    end
+
+    assert_equal [nil, 7], seen
+  end
+
   def test_connect_raises_when_the_request_host_is_blocked
     assert_raises(HTTP::BlockedHostError) { connect_to(blocklist: LOOPBACK_RULES) }
   end

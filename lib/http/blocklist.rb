@@ -89,13 +89,15 @@ module HTTP
     #   blocklist.validate!("example.com") # => "93.184.216.34"
     #
     # @param [String] host hostname or IP address to resolve
+    # @param [Numeric, nil] timeout seconds allowed for the resolution
     # @return [String] the validated address to connect to
     # @raise [HTTP::BlockedHostError] when the host or an address is blocked
+    # @raise [HTTP::ConnectTimeoutError] when the resolution runs out of time
     # @api public
-    def validate!(host)
+    def validate!(host, timeout: nil)
       raise BlockedHostError, "blocked host: #{host}" if blocked_host?(host)
 
-      addresses = Addrinfo.getaddrinfo(host, nil, nil, :STREAM).map(&:ip_address)
+      addresses = resolve(host, timeout)
 
       addresses.each do |address|
         next unless blocked_address?(IPAddr.new(address))
@@ -123,6 +125,37 @@ module HTTP
     end
 
     private
+
+    # Resolves a hostname to the addresses it points at
+    #
+    # @param [String] host hostname or IP address to resolve
+    # @param [Numeric, nil] timeout seconds allowed for the resolution
+    # @return [Array<String>] the resolved addresses
+    # @raise [HTTP::ConnectTimeoutError] when the resolution runs out of time
+    # @api private
+    def resolve(host, timeout)
+      return Addrinfo.getaddrinfo(host, nil, nil, :STREAM).map(&:ip_address) unless timeout
+
+      resolve_within(host, timeout)
+    end
+
+    # Resolves a hostname, giving up once the timeout has passed
+    #
+    # A resolution that runs out of time surfaces as an `ArgumentError`, so it
+    # is translated into the same error a slow connect raises. The timeout is
+    # only honored where the platform can resolve asynchronously; elsewhere the
+    # resolver ignores it.
+    #
+    # @param [String] host hostname or IP address to resolve
+    # @param [Numeric] timeout seconds allowed for the resolution
+    # @return [Array<String>] the resolved addresses
+    # @raise [HTTP::ConnectTimeoutError] when the resolution runs out of time
+    # @api private
+    def resolve_within(host, timeout)
+      Addrinfo.getaddrinfo(host, nil, nil, :STREAM, nil, nil, timeout: timeout).map(&:ip_address)
+    rescue ArgumentError
+      raise ConnectTimeoutError, "Resolving #{host} timed out after #{timeout} seconds"
+    end
 
     # Normalizes a hostname for comparison
     #

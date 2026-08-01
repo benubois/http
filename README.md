@@ -190,6 +190,11 @@ Note that with a blocklist configured http.rb connects to a single validated
 address rather than letting the OS try each one, so dual-stack fallback
 (Happy Eyeballs) does not apply to those requests.
 
+The name resolution the check performs is bounded by the connect timeout, so
+`HTTP.timeout(connect: 2).blocklist(...)` raises `HTTP::ConnectTimeoutError`
+rather than waiting on a slow resolver. Ruby only enforces that timeout where
+the platform can resolve asynchronously, so treat it as an upper bound.
+
 ### Thread Safety
 
 Configured sessions are safe to share across threads:

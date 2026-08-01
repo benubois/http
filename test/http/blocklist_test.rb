@@ -108,6 +108,34 @@ class HTTPBlocklistTest < Minitest::Test
     end
   end
 
+  def test_validate_bounds_the_resolution_with_the_given_timeout
+    blocklist = HTTP::Blocklist.new([])
+    seen      = []
+    resolver  = lambda do |*args, **options|
+      seen << [args.length, options]
+      [Addrinfo.ip("93.184.216.34")]
+    end
+
+    Addrinfo.stub(:getaddrinfo, resolver) do
+      blocklist.validate!("example.com")
+      blocklist.validate!("example.com", timeout: 5)
+    end
+
+    assert_equal [[4, {}], [6, { timeout: 5 }]], seen
+  end
+
+  def test_validate_raises_a_connect_timeout_when_the_resolution_runs_out_of_time
+    blocklist = HTTP::Blocklist.new([])
+    resolver  = ->(*, **) { raise ArgumentError, "NULL pointer given" }
+
+    Addrinfo.stub(:getaddrinfo, resolver) do
+      err = assert_raises(HTTP::ConnectTimeoutError) { blocklist.validate!("example.com", timeout: 5) }
+
+      assert_equal "Resolving example.com timed out after 5 seconds", err.message
+      assert_raises(ArgumentError) { blocklist.validate!("example.com") }
+    end
+  end
+
   def test_validate_raises_for_a_blocked_hostname_without_resolving_it
     blocklist = HTTP::Blocklist.new(["blocked.invalid"])
 

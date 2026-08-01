@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.get(url, blocklist: [IPAddr.new("127.0.0.0/8")])`,
   `HTTP.get(url, blocklist: { entries: [...], deny: ->(a) { a.loopback? } })`.
   Note that requests using a blocklist connect to a single validated address, so
-  dual-stack fallback (Happy Eyeballs) does not apply to them. A blocklist
+  dual-stack fallback (Happy Eyeballs) does not apply to them. The name
+  resolution the check performs is bounded by the connect timeout, raising
+  `HTTP::ConnectTimeoutError` when it runs out of time. A blocklist
   cannot be enforced through a proxy — the proxy resolves the target and makes
   the connection — so combining the two warns once and the checks are advisory.
 
