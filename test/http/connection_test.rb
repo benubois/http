@@ -1558,19 +1558,27 @@ class HTTPConnectionTest < Minitest::Test
     assert_includes LOOPBACK_ADDRESSES, connect_to(blocklist: [IPAddr.new("10.0.0.0/8")])
   end
 
-  def test_connect_bounds_blocklist_resolution_with_the_connect_timeout
+  # The socket bounds its own resolution with resolv_timeout, not with
+  # connect_timeout, so the blocklist has to use the same budget. Deriving it
+  # from connect_timeout would make enabling a blocklist silently impose a
+  # resolution deadline no other request has -- and one sized for opening a
+  # socket, far too short for a resolver retrying an unanswered query.
+  def test_connect_bounds_blocklist_resolution_with_the_resolve_timeout
     seen     = []
     resolver = lambda do |*_args, **options|
       seen << options[:timeout]
       [Addrinfo.ip("93.184.216.34")]
     end
+    rules = [IPAddr.new("10.0.0.0/8")]
 
     Addrinfo.stub(:getaddrinfo, resolver) do
-      connect_to(blocklist: [IPAddr.new("10.0.0.0/8")])
-      connect_to(blocklist: [IPAddr.new("10.0.0.0/8")], timeout_options: { connect_timeout: 7 })
+      connect_to(blocklist: rules)
+      connect_to(blocklist: rules, timeout_options: { connect_timeout: 7 })
+      connect_to(blocklist: rules, timeout_options: { resolve_timeout: 3 })
+      connect_to(blocklist: rules, timeout_options: { connect_timeout: 7, resolve_timeout: 3 })
     end
 
-    assert_equal [nil, 7], seen
+    assert_equal [nil, nil, 3, 3], seen, "connect_timeout must never bound resolution"
   end
 
   def test_connect_raises_when_the_request_host_is_blocked

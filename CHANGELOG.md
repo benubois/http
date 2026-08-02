@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `HTTP.timeout(resolve: n)` bounds name resolution, which `connect:` never
+  covered — `TCPSocket` takes `resolv_timeout` and `connect_timeout` as separate
+  budgets and leaves the former unset by default. It applies both to the socket
+  resolving a hostname itself and to the resolution a blocklist performs, so
+  enabling a blocklist no longer imposes a resolution deadline that ordinary
+  requests do not have. Unbounded by default, as before.
+
+### Fixed
+
+- `HTTP::Timeout::Global` now charges a failed connect attempt against the
+  budget and refuses to start one once the budget is spent. Previously only a
+  successful connect was charged, so trying several addresses for one host could
+  consume a fresh global timeout per address.
+
 - `HTTP.blocklist` denies requests to hostnames and IP addresses you don't want
   reachable, raising `HTTP::BlockedHostError`. `IPAddr` entries are matched
   against every address the request host resolves to, and the socket connects

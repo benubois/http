@@ -1573,7 +1573,7 @@ module HTTP
       attr_reader options: Hash[Symbol, Numeric]
       attr_reader socket: untyped
 
-      def initialize: (?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?, ?global_timeout: Numeric?) -> void
+      def initialize: (?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?, ?resolve_timeout: Numeric?, ?global_timeout: Numeric?) -> void
       def connect: (untyped socket_class, String host, Integer port, ?nodelay: bool) -> void
       def connect_ssl: () -> void
       def close: () -> void
@@ -1590,7 +1590,7 @@ module HTTP
       def rescue_readable: (?Numeric? timeout) { () -> untyped } -> untyped
       def rescue_writable: (?Numeric? timeout) { () -> untyped } -> untyped
       def open_socket: (untyped socket_class, String host, Integer port, ?connect_timeout: Numeric?) -> untyped
-      def open_with_timeout: (untyped socket_class, String host, Integer port, Numeric connect_timeout) -> untyped
+      def open_with_timeout: (untyped socket_class, String host, Integer port, Numeric? connect_timeout) -> untyped
       def native_timeout?: (untyped socket_class) -> bool
     end
 
@@ -1609,7 +1609,7 @@ module HTTP
       attr_reader write_timeout: Numeric?
       attr_reader connect_timeout: Numeric?
 
-      def initialize: (?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?) -> void
+      def initialize: (?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?, ?resolve_timeout: Numeric?) -> void
       def connect: (untyped socket_class, String host, Integer port, ?nodelay: bool) -> void
       def readpartial: (Integer size, ?String? buffer) -> (String | Symbol)
       def write: (String data) -> Integer
@@ -1629,7 +1629,7 @@ module HTTP
       @write_timeout: Numeric?
       @connect_timeout: Numeric?
 
-      def initialize: (global_timeout: Numeric, ?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?) -> void
+      def initialize: (global_timeout: Numeric, ?read_timeout: Numeric?, ?write_timeout: Numeric?, ?connect_timeout: Numeric?, ?resolve_timeout: Numeric?) -> void
       def reset_counter: () -> Numeric
       def connect: (untyped socket_class, String host, Integer port, ?nodelay: bool) -> void
       def readpartial: (Integer size, ?String? buffer) -> (String | Symbol)
@@ -1647,6 +1647,7 @@ module HTTP
       def effective_timeout: (Numeric? per_op_timeout) -> Numeric
       def reset_timer: () -> void
       def log_time: () -> void
+      def raise_if_time_exhausted: () -> void
     end
   end
 

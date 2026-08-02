@@ -174,6 +174,59 @@ class HTTPTimeoutNullTest < Minitest::Test
     assert_equal [["127.0.0.1", 1], { connect_timeout: 5 }], received_args
   end
 
+  # Resolution is a separate phase with its own keyword. Without this the socket
+  # resolves unbounded, which is why a blocklist deriving its resolver budget
+  # from connect_timeout was strictly harsher than an ordinary request.
+  def test_open_socket_passes_the_resolve_timeout_natively
+    received = nil
+    timeout  = HTTP::Timeout::Null.new(resolve_timeout: 3)
+    stub_open = lambda do |*args, **kwargs|
+      received = [args, kwargs]
+      fake(closed?: false)
+    end
+
+    timeout.stub(:native_timeout?, true) do
+      TCPSocket.stub(:open, stub_open) do
+        timeout.send(:open_socket, TCPSocket, "127.0.0.1", 1, connect_timeout: 5)
+      end
+    end
+
+    assert_equal [["127.0.0.1", 1], { connect_timeout: 5, resolv_timeout: 3 }], received
+  end
+
+  def test_open_socket_bounds_resolution_even_without_a_connect_timeout
+    received = nil
+    timeout  = HTTP::Timeout::Null.new(resolve_timeout: 3)
+    stub_open = lambda do |*args, **kwargs|
+      received = [args, kwargs]
+      fake(closed?: false)
+    end
+
+    timeout.stub(:native_timeout?, true) do
+      TCPSocket.stub(:open, stub_open) do
+        timeout.send(:open_socket, TCPSocket, "127.0.0.1", 1)
+      end
+    end
+
+    assert_equal [["127.0.0.1", 1], { connect_timeout: nil, resolv_timeout: 3 }], received
+  end
+
+  def test_open_socket_omits_the_resolve_timeout_when_unset
+    received = nil
+    stub_open = lambda do |*args, **kwargs|
+      received = [args, kwargs]
+      fake(closed?: false)
+    end
+
+    @timeout.stub(:native_timeout?, true) do
+      TCPSocket.stub(:open, stub_open) do
+        @timeout.send(:open_socket, TCPSocket, "127.0.0.1", 1, connect_timeout: 5)
+      end
+    end
+
+    assert_equal [["127.0.0.1", 1], { connect_timeout: 5 }], received
+  end
+
   def test_open_socket_does_not_pass_connect_timeout_to_non_tcp_socket_classes
     received_args = nil
     tcp_socket = fake(closed?: false)

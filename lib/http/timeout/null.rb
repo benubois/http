@@ -40,12 +40,16 @@ module HTTP
       # @param [Numeric, nil] read_timeout Read timeout in seconds
       # @param [Numeric, nil] write_timeout Write timeout in seconds
       # @param [Numeric, nil] connect_timeout Connect timeout in seconds
+      # @param [Numeric, nil] resolve_timeout Name resolution timeout in seconds
       # @param [Numeric, nil] global_timeout Global timeout in seconds
       # @api public
       # @return [HTTP::Timeout::Null]
-      def initialize(read_timeout: nil, write_timeout: nil, connect_timeout: nil, global_timeout: nil)
+      def initialize(read_timeout: nil, write_timeout: nil, connect_timeout: nil, resolve_timeout: nil,
+                     global_timeout: nil)
+        @resolve_timeout = resolve_timeout
         @options = { read_timeout: read_timeout, write_timeout: write_timeout,
-                     connect_timeout: connect_timeout, global_timeout: global_timeout }.compact
+                     connect_timeout: connect_timeout, resolve_timeout: resolve_timeout,
+                     global_timeout: global_timeout }.compact
       end
 
       # Connects to a socket
@@ -185,7 +189,7 @@ module HTTP
       # @return [Object] the connected socket
       # @api private
       def open_socket(socket_class, host, port, connect_timeout: nil)
-        return socket_class.open(host, port) unless connect_timeout
+        return socket_class.open(host, port) unless connect_timeout || @resolve_timeout
 
         if native_timeout?(socket_class)
           open_with_timeout(socket_class, host, port, connect_timeout)
@@ -206,12 +210,16 @@ module HTTP
       # @param [Numeric] connect_timeout timeout in seconds
       # @return [Object] the connected socket
       # @api private
+      # Name resolution is a separate phase from connecting, and TCPSocket
+      # bounds it with its own keyword. Without one it is unbounded, so a
+      # connect_timeout says nothing about how long resolving may take.
       def open_with_timeout(socket_class, host, port, connect_timeout)
-        if native_timeout?(socket_class)
-          socket_class.open(host, port, connect_timeout: connect_timeout)
-        else
-          socket_class.open(host, port)
-        end
+        return socket_class.open(host, port) unless native_timeout?(socket_class)
+
+        resolve_timeout = @resolve_timeout
+        return socket_class.open(host, port, connect_timeout: connect_timeout) unless resolve_timeout
+
+        socket_class.open(host, port, connect_timeout: connect_timeout, resolv_timeout: resolve_timeout)
       end
 
       # Whether the socket class supports native connect_timeout

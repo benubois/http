@@ -20,9 +20,11 @@ module HTTP
       # @param [Numeric, nil] read_timeout Read timeout in seconds
       # @param [Numeric, nil] write_timeout Write timeout in seconds
       # @param [Numeric, nil] connect_timeout Connect timeout in seconds
+      # @param [Numeric, nil] resolve_timeout Name resolution timeout in seconds
       # @api public
       # @return [HTTP::Timeout::Global]
-      def initialize(global_timeout:, read_timeout: nil, write_timeout: nil, connect_timeout: nil)
+      def initialize(global_timeout:, read_timeout: nil, write_timeout: nil, connect_timeout: nil,
+                     resolve_timeout: nil)
         super
 
         @timeout = @time_left = global_timeout
@@ -54,9 +56,17 @@ module HTTP
       # @api public
       # @return [void]
       def connect(socket_class, host, port, nodelay: false)
+        raise_if_time_exhausted
+
         reset_timer
-        @socket = open_socket(socket_class, host, port, connect_timeout: effective_timeout(@connect_timeout))
-        @socket.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1) if nodelay
+
+        begin
+          @socket = open_socket(socket_class, host, port, connect_timeout: effective_timeout(@connect_timeout))
+          @socket.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1) if nodelay
+        rescue => e
+          log_time
+          raise e
+        end
 
         log_time
       end
@@ -220,9 +230,26 @@ module HTTP
       # @return [void]
       def log_time
         @time_left -= (Time.now - @started)
-        raise TimeoutError, "Timed out after using the allocated #{@timeout} seconds" if @time_left <= 0
+        raise_if_time_exhausted
 
         reset_timer
+      end
+
+      # Raises if the global timeout budget is already used up
+      #
+      # Checked both before a connect attempt starts (so a candidate address is
+      # never dialed with a zero or negative timeout, which socket_class and
+      # Timeout.timeout treat as "unbounded" or reject outright) and after one
+      # fails (so a slow failure that exhausts the budget ends the request
+      # instead of handing the next candidate a fresh timeout).
+      #
+      # @example
+      #   timeout.send(:raise_if_time_exhausted)
+      #
+      # @api private
+      # @return [void]
+      def raise_if_time_exhausted
+        raise TimeoutError, "Timed out after using the allocated #{@timeout} seconds" if @time_left <= 0
       end
     end
   end

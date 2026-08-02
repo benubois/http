@@ -9,7 +9,7 @@ module HTTP
     # Timeout handler with separate timeouts for connect, read, and write
     class PerOperation < Null
       # Mapping of shorthand option keys to their full forms
-      KEYS = %i[read write connect].to_h { |k| [k, :"#{k}_timeout"] }.freeze
+      KEYS = %i[read write connect resolve].to_h { |k| [k, :"#{k}_timeout"] }.freeze
 
       # Normalize and validate timeout options
       #
@@ -80,9 +80,10 @@ module HTTP
       # @param [Numeric, nil] read_timeout Read timeout in seconds (nil for no timeout)
       # @param [Numeric, nil] write_timeout Write timeout in seconds (nil for no timeout)
       # @param [Numeric, nil] connect_timeout Connect timeout in seconds (nil for no timeout)
+      # @param [Numeric, nil] resolve_timeout Name resolution timeout in seconds (nil for no timeout)
       # @api public
       # @return [HTTP::Timeout::PerOperation]
-      def initialize(read_timeout: nil, write_timeout: nil, connect_timeout: nil)
+      def initialize(read_timeout: nil, write_timeout: nil, connect_timeout: nil, resolve_timeout: nil)
         super
 
         @read_timeout = read_timeout

@@ -27,6 +27,57 @@ class HTTPTimeoutGlobalTest < Minitest::Test
     assert_equal [Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1], setsockopt_args
   end
 
+  def test_connect_charges_a_failed_attempts_elapsed_time_so_the_next_attempt_gets_a_reduced_budget
+    timeout = HTTP::Timeout::Global.new(global_timeout: 5)
+    start   = Time.now
+    # 1st connect (fails): reset_timer, log_time-decrement, log_time-reset.
+    # 2nd connect (succeeds): reset_timer, log_time-decrement, log_time-reset.
+    times = [start, start + 4, start + 4, start + 4, start + 4.2, start + 4.2].each
+    failing_socket_class    = fake(open: ->(*) { raise Errno::ECONNREFUSED, "refused" })
+    succeeding_socket_class = fake(open: ->(*) { Object.new })
+
+    Time.stub(:now, -> { times.next }) do
+      assert_raises(Errno::ECONNREFUSED) { timeout.connect(failing_socket_class, "10.0.0.1", 80) }
+
+      # The failed attempt used 4 of the 5 seconds, leaving 1 second, not a fresh 5.
+      assert_in_delta 1, timeout.instance_variable_get(:@time_left), 0.001
+
+      timeout.connect(succeeding_socket_class, "10.0.0.2", 80)
+    end
+
+    # If the 2nd attempt had been handed a fresh 5s budget instead of the
+    # reduced 1s, this would be ~4.8 (5 - 0.2) instead of ~0.8 (1 - 0.2).
+    assert_in_delta 0.8, timeout.instance_variable_get(:@time_left), 0.001
+  end
+
+  def test_connect_raises_timeout_error_instead_of_the_original_error_when_charging_exhausts_the_budget
+    timeout = HTTP::Timeout::Global.new(global_timeout: 5)
+    start   = Time.now
+    times   = [start, start + 5.5].each
+    failing_socket_class = fake(open: ->(*) { raise Errno::ECONNREFUSED, "refused" })
+
+    Time.stub(:now, -> { times.next }) do
+      err = assert_raises(HTTP::TimeoutError) { timeout.connect(failing_socket_class, "10.0.0.1", 80) }
+
+      assert_match(/Timed out after using the allocated 5 seconds/, err.message)
+    end
+  end
+
+  def test_connect_raises_immediately_when_the_budget_is_already_exhausted
+    timeout = HTTP::Timeout::Global.new(global_timeout: 5)
+    timeout.instance_variable_set(:@time_left, 0)
+    attempted = false
+    socket_class = fake(open: ->(*) { attempted = true })
+
+    err = assert_raises(HTTP::TimeoutError) { timeout.connect(socket_class, "10.0.0.1", 80) }
+
+    assert_match(/Timed out after using the allocated 5 seconds/, err.message)
+    # A zero (or negative) timeout passed to Timeout.timeout is treated as
+    # "unbounded" rather than "expired", so the exhausted budget must be
+    # caught before ever attempting to open a socket.
+    refute attempted, "should not attempt to open a socket with no budget left"
+  end
+
   # -- #connect_ssl --
 
   def test_connect_ssl_completes_without_error

@@ -18,6 +18,13 @@ module HTTP
       # keeps whatever fallback the platform provides. With one, it is every
       # address that passed validation.
       #
+      # The resolution is bounded by `resolve_timeout`, the same budget the
+      # socket is given when it resolves the hostname itself. Using
+      # `connect_timeout` here instead would make enabling a blocklist silently
+      # impose a resolution deadline that no other request has, and a budget
+      # sized for opening a socket is far too short for a resolver that has to
+      # retry an unanswered query.
+      #
       # @example
       #   connect_addresses(req, options)
       #
@@ -32,7 +39,7 @@ module HTTP
 
         proxied = req.using_proxy?
         blocklist.warn_proxy_incompatible if proxied
-        addresses = blocklist.validate!(req.host, timeout: options.timeout_options[:connect_timeout])
+        addresses = blocklist.validate!(req.host, timeout: options.timeout_options[:resolve_timeout])
 
         proxied ? [req.socket_host] : addresses
       end

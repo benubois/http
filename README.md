@@ -213,10 +213,20 @@ It is called with `:resolved` once per request — `host`, `addresses`, `allowed
 means an earlier address failed and fallback kicked in. The observer runs inline
 on the request path and is not rescued, so keep it cheap and don't raise from it.
 
-The name resolution the check performs is bounded by the connect timeout, so
-`HTTP.timeout(connect: 2).blocklist(...)` raises `HTTP::ConnectTimeoutError`
-rather than waiting on a slow resolver. Ruby only enforces that timeout where
-the platform can resolve asynchronously, so treat it as an upper bound.
+The name resolution the check performs is bounded by `resolve:`, the same
+budget the socket uses when it resolves a hostname itself:
+
+```ruby
+HTTP.timeout(connect: 5, read: 30, resolve: 10).blocklist(...)
+```
+
+Both are unbounded by default, so enabling a blocklist does not change how long
+resolution may take. Set `resolve:` and it applies whether or not a blocklist is
+configured. Do not reach for `connect:` here — it bounds opening a socket to a
+known address and never covers resolution, and a budget sized for that is far
+too short for a resolver that has to retry an unanswered query. Ruby only
+enforces the resolver timeout where the platform can resolve asynchronously, so
+treat it as an upper bound.
 
 ### Thread Safety
 
