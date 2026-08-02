@@ -11,9 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `HTTP.blocklist` denies requests to hostnames and IP addresses you don't want
   reachable, raising `HTTP::BlockedHostError`. `IPAddr` entries are matched
-  against every address the request host resolves to, and the socket connects to
-  the address that was validated, so DNS cannot answer differently between the
-  check and the connect. `String` entries are hostnames, matching the request
+  against every address the request host resolves to, and the socket connects
+  only to addresses that were validated, so DNS cannot answer differently between
+  the check and the connect. A host is blocked only when *every* address it
+  resolves to is blocked; when it resolves to both, the permitted address is used
+  and the blocked one is never dialed. Every permitted address is tried in turn,
+  so dual-stack fallback still applies. An optional `observer:` callable receives
+  `:resolved` and `:connect` events describing what was resolved, what was
+  filtered, and which address each dial attempt used.
+  `String` entries are hostnames, matching the request
   host and its subdomains. An optional `deny:` callable receives each resolved
   address as an `IPAddr` and blocks it by returning true, e.g.
   `HTTP.blocklist(deny: ->(address) { address.loopback? || address.private? })`.

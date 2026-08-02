@@ -18,7 +18,57 @@ module HTTP
   class RequestError < Error; end
 
   # Error raised when host matches a blocked host/ip
-  class BlockedHostError < RequestError; end
+  class BlockedHostError < RequestError
+    # The hostname that was rejected
+    #
+    # @example
+    #   error.host # => "example.com"
+    #
+    # @return [String, nil]
+    # @api public
+    attr_reader :host
+
+    # Every address the hostname resolved to
+    #
+    # Carried on the error so a caller reporting the rejection does not have to
+    # resolve the hostname a second time, which costs another lookup and can
+    # return a different answer than the one that was actually judged.
+    #
+    # @example
+    #   error.addresses # => ["93.184.216.34", "fe80::1"]
+    #
+    # @return [Array<String>]
+    # @api public
+    attr_reader :addresses
+
+    # The subset of {#addresses} that matched a rule
+    #
+    # @example
+    #   error.blocked # => ["fe80::1"]
+    #
+    # @return [Array<String>]
+    # @api public
+    attr_reader :blocked
+
+    # Creates a new BlockedHostError
+    #
+    # @example
+    #   BlockedHostError.new("blocked host: example.com", host: "example.com")
+    #
+    # @param [String] message the error message
+    # @param [String, nil] host the hostname that was rejected
+    # @param [Array<String>] addresses every address the hostname resolved to
+    # @param [Array<String>] blocked the addresses that matched a rule
+    # @return [HTTP::BlockedHostError]
+    # @api public
+    def initialize(message, host: nil, addresses: [], blocked: [])
+      super(message)
+
+      @host      = host
+      @addresses = addresses
+      @blocked   = blocked
+    end
+  end
 
   # Generic Response error
   class ResponseError < Error; end

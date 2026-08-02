@@ -9,19 +9,24 @@ module HTTP
 
   type blocklist_deny = ^(IPAddr) -> boolish
 
+  type blocklist_observer = ^(Symbol, Hash[Symbol, untyped]) -> void
+
   type blocklist_entries = Blocklist | Array[blocklist_rule] | String | Hash[Symbol, untyped]
 
   class Blocklist
     @addresses: Array[IPAddr]
     @hosts: Array[String]
     @deny: blocklist_deny?
+    @observer: blocklist_observer?
     @warned: bool?
 
-    def self.new: (?blocklist_entries entries, ?deny: blocklist_deny?) -> Blocklist
-    def initialize: (Array[blocklist_rule] | String | nil entries, deny: blocklist_deny?) -> void
+    def self.new: (?blocklist_entries entries, ?deny: blocklist_deny?, ?observer: blocklist_observer?) -> Blocklist
+    def initialize: (Array[blocklist_rule] | String | nil entries, deny: blocklist_deny?, observer: blocklist_observer?) -> void
     def blocked_host?: (String host) -> bool
     def blocked_address?: (IPAddr address) -> bool
-    def validate!: (String host, ?timeout: Numeric?) -> String
+    def validate!: (String host, ?timeout: Numeric?) -> Array[String]
+    def notify: (Symbol event, **untyped payload) -> void
+    def raise_all_blocked!: (String host, Array[String] addresses, Array[String] blocked) -> void
     def warn_proxy_incompatible: () -> void
 
     private
@@ -130,7 +135,7 @@ module HTTP
     def via: (*(String | Integer | Hash[String, String]) proxy) -> Session
     alias through via
     def follow: (?strict: bool, ?max_hops: Integer, ?on_redirect: (^(Response, Request) -> void)?) -> Session
-    def blocklist: (*blocklist_rule entries, ?deny: blocklist_deny?) -> Session
+    def blocklist: (*blocklist_rule entries, ?deny: blocklist_deny?, ?observer: blocklist_observer?) -> Session
     def headers: (Hash[String | Symbol, untyped] headers) -> Session
     def cookies: (Hash[String | Symbol, String] | Array[Cookie] cookies) -> Session
     def encoding: (String | Encoding encoding) -> Session
@@ -1150,6 +1155,7 @@ module HTTP
 
   class Connection
     extend Forwardable
+    include Connection::Dialing
     include Connection::Internals
 
     BUFFER_SIZE: Integer
@@ -1199,6 +1205,23 @@ module HTTP
     def set_keep_alive: () -> void
     def read_more: (Integer size) -> untyped
 
+    module Dialing : _DialingHost
+      interface _DialingHost
+        def close: () -> void
+      end
+
+      @socket: untyped
+
+      private
+
+      def connect_addresses: (Request req, Options options) -> Array[String]
+      def connect_any: (Request req, Options options) -> void
+      def close_failed_socket: () -> void
+      def dial: (Request req, Options options, Array[String] addresses, Integer index) -> void
+      def report_dial: (Options options, Request req, address: String, index: Integer,
+                        total: Integer, started: Float, error: Exception?) -> void
+    end
+
     module Internals : _InternalsHost
       interface _InternalsHost
         def failed_proxy_connect?: () -> bool
@@ -1210,7 +1233,6 @@ module HTTP
 
       def flush_pending_response: () -> void
       def flush_or_close_response: (Response response) -> void
-      def connect_address: (Request req, Options options) -> String
       def start_tls: (Request req, Options options) -> void
       def send_proxy_connect_request: (Request req) -> void
       def handle_proxy_connect_response: () -> void
@@ -1501,6 +1523,15 @@ module HTTP
   end
 
   class BlockedHostError < RequestError
+    @host: String?
+    @addresses: Array[String]
+    @blocked: Array[String]
+
+    attr_reader host: String?
+    attr_reader addresses: Array[String]
+    attr_reader blocked: Array[String]
+
+    def initialize: (String message, ?host: String?, ?addresses: Array[String], ?blocked: Array[String]) -> void
   end
 
   class ResponseError < Error

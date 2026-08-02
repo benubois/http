@@ -97,14 +97,14 @@ class HTTPBlocklistTest < Minitest::Test
 
   # #validate!
 
-  def test_validate_returns_the_first_resolved_address
+  def test_validate_returns_every_permitted_address
     blocklist = HTTP::Blocklist.new([IPAddr.new("10.0.0.0/8")])
     resolved  = [Addrinfo.ip("93.184.216.34"), Addrinfo.ip("93.184.216.35")]
 
-    assert_equal "127.0.0.1", blocklist.validate!("127.0.0.1")
+    assert_equal ["127.0.0.1"], blocklist.validate!("127.0.0.1")
 
     Addrinfo.stub(:getaddrinfo, resolved) do
-      assert_equal "93.184.216.34", blocklist.validate!("example.com")
+      assert_equal ["93.184.216.34", "93.184.216.35"], blocklist.validate!("example.com")
     end
   end
 
@@ -143,15 +143,92 @@ class HTTPBlocklistTest < Minitest::Test
     assert_includes err.message, "api.blocked.invalid"
   end
 
-  def test_validate_raises_when_any_resolved_address_is_blocked
+  # A host that publishes one bad record beside a working one is a
+  # misconfiguration, not an attack. Rejecting it outright takes the site down;
+  # filtering keeps it reachable and still never dials the blocked address.
+  def test_validate_filters_blocked_addresses_but_keeps_the_host_reachable
     blocklist = HTTP::Blocklist.new([LOOPBACK_V4])
     resolved  = [Addrinfo.ip("93.184.216.34"), Addrinfo.ip("127.0.0.1")]
 
     Addrinfo.stub(:getaddrinfo, resolved) do
-      err = assert_raises(HTTP::BlockedHostError) { blocklist.validate!("example.com") }
-      assert_includes err.message, "example.com"
-      assert_includes err.message, "127.0.0.1"
+      assert_equal ["93.184.216.34"], blocklist.validate!("example.com")
     end
+  end
+
+  def test_validate_raises_only_when_every_resolved_address_is_blocked
+    blocklist = HTTP::Blocklist.new([LOOPBACK_V4])
+    resolved  = [Addrinfo.ip("127.0.0.1"), Addrinfo.ip("127.0.0.2")]
+
+    Addrinfo.stub(:getaddrinfo, resolved) do
+      err = assert_raises(HTTP::BlockedHostError) { blocklist.validate!("example.com") }
+
+      assert_equal "example.com resolves only to blocked addresses: 127.0.0.1, 127.0.0.2", err.message
+      assert_equal "example.com", err.host
+      assert_equal ["127.0.0.1", "127.0.0.2"], err.addresses
+      assert_equal ["127.0.0.1", "127.0.0.2"], err.blocked
+    end
+  end
+
+  # The rejection carries what was resolved, so a caller reporting it does not
+  # resolve a second time and risk judging a different answer.
+  def test_validate_reports_the_permitted_addresses_alongside_the_blocked_ones
+    blocklist = HTTP::Blocklist.new(deny: DENY_LOOPBACK)
+    resolved  = [Addrinfo.ip("127.0.0.1")]
+
+    Addrinfo.stub(:getaddrinfo, resolved) do
+      err = assert_raises(HTTP::BlockedHostError) { blocklist.validate!("example.com") }
+
+      assert_equal ["127.0.0.1"], err.addresses
+      assert_equal ["127.0.0.1"], err.blocked
+    end
+  end
+
+  def test_validate_reports_the_host_on_a_hostname_rule_rejection
+    blocklist = HTTP::Blocklist.new(["blocked.invalid"])
+
+    err = assert_raises(HTTP::BlockedHostError) { blocklist.validate!("api.blocked.invalid") }
+
+    assert_equal "api.blocked.invalid", err.host
+    assert_empty err.addresses
+    assert_empty err.blocked
+  end
+
+  # #observer
+
+  def test_observer_receives_the_resolution_outcome
+    events    = []
+    blocklist = HTTP::Blocklist.new([LOOPBACK_V4], observer: ->(event, data) { events << [event, data] })
+    resolved  = [Addrinfo.ip("93.184.216.34"), Addrinfo.ip("127.0.0.1")]
+
+    Addrinfo.stub(:getaddrinfo, resolved) do
+      blocklist.validate!("example.com")
+    end
+
+    event, data = events.fetch(0)
+
+    assert_equal :resolved, event
+    assert_equal "example.com", data.fetch(:host)
+    assert_equal ["93.184.216.34", "127.0.0.1"], data.fetch(:addresses)
+    assert_equal ["93.184.216.34"], data.fetch(:allowed)
+    assert_equal ["127.0.0.1"], data.fetch(:blocked)
+    assert_operator data.fetch(:duration), :>=, 0
+    # Bounded above too, or emitting a raw clock reading instead of the elapsed
+    # time reads as a plausible duration forever.
+    assert_operator data.fetch(:duration), :<, 1
+  end
+
+  def test_observer_is_optional
+    blocklist = HTTP::Blocklist.new([])
+
+    assert_nil blocklist.notify(:resolved, host: "example.com")
+  end
+
+  # Whatever the observer returns stays with the observer, so a diagnostic hook
+  # can never become something the caller reads a value out of.
+  def test_notify_returns_nil_even_when_the_observer_returns_a_value
+    blocklist = HTTP::Blocklist.new([], observer: ->(_event, _data) { :reported })
+
+    assert_nil blocklist.notify(:resolved, host: "example.com")
   end
 
   def test_validate_raises_when_deny_blocks_a_resolved_address

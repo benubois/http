@@ -17,9 +17,10 @@ module HTTP
     #
     # @param [HTTP::Blocklist, Array<IPAddr, String>, String] entries
     # @param [#call, nil] deny predicate called with each resolved address
+    # @param [#call, nil] observer receives diagnostic events
     # @return [HTTP::Blocklist]
     # @api public
-    def self.new(entries = [], deny: nil)
+    def self.new(entries = [], deny: nil, observer: nil)
       return entries if entries.is_a?(Blocklist)
 
       super
@@ -32,15 +33,17 @@ module HTTP
     #
     # @param [Array<IPAddr, String>, String] entries address and hostname rules
     # @param [#call, nil] deny called with each resolved address, truthy blocks it
+    # @param [#call, nil] observer called with each diagnostic event
     # @return [HTTP::Blocklist]
     # @api public
-    def initialize(entries, deny:)
+    def initialize(entries, deny:, observer:)
       rules = Array(entries) #: Array[IPAddr | String]
       hosts = rules.grep(String) #: Array[String]
 
       @addresses = rules.grep(IPAddr)
       @hosts     = hosts.map { |entry| ".#{normalize_host(entry)}" }
       @deny      = deny
+      @observer  = observer
     end
 
     # Whether a hostname matches any hostname rule
@@ -78,34 +81,61 @@ module HTTP
       deny.call(ip) ? true : false
     end
 
-    # Resolves a hostname, denying it if the name or any address is blocked
+    # Resolves a hostname and returns the addresses that are not blocked
     #
     # Hostname rules are checked before resolving, so a blocked name never
-    # generates DNS traffic. Every resolved address is checked, and the first
-    # one is returned so the caller can connect to a validated address rather
-    # than resolving a second time.
+    # generates DNS traffic. Blocked addresses are filtered out rather than
+    # failing the whole host, because the caller connects only to addresses
+    # returned here: a host that also resolves to a permitted address stays
+    # reachable, and the blocked one is still never dialed. Rejecting the host
+    # outright would take down any site that publishes one bad record beside a
+    # working one, which is a misconfiguration far more common than an attack.
+    #
+    # Every permitted address is returned, not just the first, so the caller can
+    # fall back across them the way connecting by hostname would.
     #
     # @example
-    #   blocklist.validate!("example.com") # => "93.184.216.34"
+    #   blocklist.validate!("example.com") # => ["93.184.216.34"]
     #
     # @param [String] host hostname or IP address to resolve
     # @param [Numeric, nil] timeout seconds allowed for the resolution
-    # @return [String] the validated address to connect to
-    # @raise [HTTP::BlockedHostError] when the host or an address is blocked
+    # @return [Array<String>] the validated addresses to connect to
+    # @raise [HTTP::BlockedHostError] when the host or every address is blocked
     # @raise [HTTP::ConnectTimeoutError] when the resolution runs out of time
     # @api public
     def validate!(host, timeout: nil)
-      raise BlockedHostError, "blocked host: #{host}" if blocked_host?(host)
+      raise BlockedHostError.new("blocked host: #{host}", host: host) if blocked_host?(host)
 
-      addresses = resolve(host, timeout)
+      started          = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      addresses        = resolve(host, timeout)
+      blocked, allowed = addresses.partition { |address| blocked_address?(IPAddr.new(address)) }
 
-      addresses.each do |address|
-        next unless blocked_address?(IPAddr.new(address))
+      notify(:resolved, host: host, addresses: addresses, allowed: allowed, blocked: blocked,
+                        duration: Process.clock_gettime(Process::CLOCK_MONOTONIC) - started)
 
-        raise BlockedHostError, "#{host} resolves to blocked address: #{address}"
-      end
+      raise_all_blocked!(host, addresses, blocked) if allowed.empty?
 
-      addresses.first
+      allowed
+    end
+
+    # Sends a diagnostic event to the observer, if one was configured
+    #
+    # The observer runs inline on the request path and is not rescued, so an
+    # observer that raises fails the request. Keep it cheap and total.
+    #
+    # @example
+    #   blocklist.notify(:connect, host: "example.com", address: "93.184.216.34")
+    #
+    # @param [Symbol] event the event name
+    # @param [Hash] payload data describing the event
+    # @return [void]
+    # @api private
+    def notify(event, **payload)
+      observer = @observer
+      return unless observer
+
+      observer.call(event, payload)
+      nil
     end
 
     # Warns once that a blocklist cannot be enforced through a proxy
@@ -125,6 +155,24 @@ module HTTP
     end
 
     private
+
+    # Raises when every address a hostname resolved to was blocked
+    #
+    # @example
+    #   raise_all_blocked!("example.com", ["fe80::1"], ["fe80::1"])
+    #
+    # @param [String] host the hostname that was resolved
+    # @param [Array<String>] addresses every address it resolved to
+    # @param [Array<String>] blocked the addresses that matched a rule
+    # @return [void]
+    # @raise [HTTP::BlockedHostError] always
+    # @api private
+    def raise_all_blocked!(host, addresses, blocked)
+      raise BlockedHostError.new(
+        "#{host} resolves only to blocked addresses: #{blocked.join(', ')}",
+        host: host, addresses: addresses, blocked: blocked
+      )
+    end
 
     # Resolves a hostname to the addresses it points at
     #

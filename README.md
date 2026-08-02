@@ -165,7 +165,7 @@ Entries are classified by type, and the block decides anything they can't:
 
 - **`IPAddr`** entries are checked against *every* address the request host
   resolves to, so a hostname pointing at `127.0.0.1` is blocked too. The socket
-  then connects to the address that was validated, so DNS cannot return a
+  then connects only to addresses that were validated, so DNS cannot return a
   different answer between the check and the connect.
 - **`String`** entries are hostnames, matched against the request host and its
   subdomains, case-insensitively: `internal.example.com` also blocks
@@ -186,9 +186,32 @@ addresses checked here are not necessarily the ones reached, and a target that
 only resolves from the proxy's network will fail to resolve locally. The rules
 are still applied on a best-effort basis; treat the result as advisory.
 
-Note that with a blocklist configured http.rb connects to a single validated
-address rather than letting the OS try each one, so dual-stack fallback
-(Happy Eyeballs) does not apply to those requests.
+**A host is blocked only when *every* address it resolves to is blocked.** If a
+host resolves to both a blocked and a permitted address, the request goes to the
+permitted one and the blocked address is never dialed. This keeps a site
+reachable when it publishes one bad record beside a working one — a stray
+link-local `AAAA` alongside a healthy `A` is a common misconfiguration, and
+rejecting the whole host over it takes the site down. There is currently no
+opt-out; if you need all-or-nothing rejection, filter in `deny:` and raise there.
+
+Every permitted address is tried in turn until one connects, so dual-stack
+fallback still applies to blocklisted requests.
+
+To see what the blocklist decided, pass an `observer:` — a callable that
+receives an event name and a Hash:
+
+```ruby
+HTTP.blocklist(
+  deny:     ->(address) { address.private? },
+  observer: ->(event, data) { logger.info("#{event} #{data}") }
+)
+```
+
+It is called with `:resolved` once per request — `host`, `addresses`, `allowed`,
+`blocked` and the resolution `duration` — and with `:connect` once per dial —
+`host`, `address`, `index`, `total`, `duration` and `error`. A non-zero `index`
+means an earlier address failed and fallback kicked in. The observer runs inline
+on the request path and is not rescued, so keep it cheap and don't raise from it.
 
 The name resolution the check performs is bounded by the connect timeout, so
 `HTTP.timeout(connect: 2).blocklist(...)` raises `HTTP::ConnectTimeoutError`

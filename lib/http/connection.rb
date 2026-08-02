@@ -2,6 +2,7 @@
 
 require "forwardable"
 
+require "http/connection/dialing"
 require "http/connection/internals"
 require "http/headers"
 
@@ -9,6 +10,7 @@ module HTTP
   # A connection to the HTTP server
   class Connection
     extend Forwardable
+    include Dialing
     include Internals
 
     # Allowed values for CONNECTION header
@@ -254,8 +256,7 @@ module HTTP
     # @return [void]
     # @api private
     def connect_socket(req, options)
-      @socket = options.timeout_class.new(**options.timeout_options)
-      @socket.connect(options.socket_class, connect_address(req, options), req.socket_port, nodelay: options.nodelay)
+      connect_any(req, options)
 
       send_proxy_connect_request(req)
       start_tls(req, options)

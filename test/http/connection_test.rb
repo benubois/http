@@ -1593,4 +1593,120 @@ class HTTPConnectionTest < Minitest::Test
     assert_empty(capture_warning { connect_to(blocklist: blocklist) })
     assert_includes capture_warning { connect_to(proxy: PROXY, blocklist: blocklist) }, "proxy"
   end
+
+  # ---------------------------------------------------------------------------
+  # address fallback
+  # ---------------------------------------------------------------------------
+
+  TWO_ADDRESSES = [Addrinfo.ip("93.184.216.34"), Addrinfo.ip("93.184.216.35")].freeze
+
+  ALLOW_ALL = [IPAddr.new("10.0.0.0/8")].freeze
+
+  # Dials every candidate, failing each one named in `failing`.
+  def dial_all(failing: [], closes: [], observer: nil, closed: false, **)
+    dialed = []
+    socket = fake(
+      connect: lambda { |_klass, host, _port, **|
+        dialed << host
+        raise Errno::ECONNREFUSED, host if failing.include?(host)
+      },
+      close: -> { closes << :close }, closed?: closed
+    )
+    timeout_class = fake(new: socket)
+    options = HTTP::Options.new(timeout_class: timeout_class, blocklist: { entries: ALLOW_ALL, observer: observer }, **)
+
+    Addrinfo.stub(:getaddrinfo, TWO_ADDRESSES) do
+      HTTP::Connection.new(build_req(uri: "http://example.com/"), options)
+    end
+
+    dialed
+  end
+
+  # Pinning the socket to one pre-resolved address gives up the fallback that
+  # connecting by hostname gets for free. Every candidate is already validated,
+  # so trying the next one restores it without dialing anything blocked.
+  def test_connect_falls_back_to_the_next_address_when_the_first_refuses
+    assert_equal ["93.184.216.34", "93.184.216.35"], dial_all(failing: ["93.184.216.34"])
+  end
+
+  def test_connect_stops_at_the_first_address_that_accepts
+    assert_equal ["93.184.216.34"], dial_all
+  end
+
+  def test_connect_closes_the_failed_socket_before_dialing_the_next_address
+    closes = []
+
+    dial_all(failing: ["93.184.216.34"], closes: closes)
+
+    assert_equal [:close], closes
+  end
+
+  # The last failure owns the socket, exactly as it did before fallback existed.
+  def test_connect_does_not_close_after_the_final_candidate_fails
+    closes = []
+
+    assert_raises(HTTP::ConnectionError) do
+      dial_all(failing: ["93.184.216.34", "93.184.216.35"], closes: closes)
+    end
+
+    assert_equal [:close], closes, "only the close between the two attempts"
+  end
+
+  def test_connect_leaves_a_socket_that_already_closed_itself_alone
+    closes = []
+
+    dialed = dial_all(failing: ["93.184.216.34"], closes: closes, closed: true)
+
+    assert_equal ["93.184.216.34", "93.184.216.35"], dialed
+    assert_empty closes
+  end
+
+  def test_connect_raises_the_last_error_when_every_address_fails
+    err = assert_raises(HTTP::ConnectionError) { dial_all(failing: ["93.184.216.34", "93.184.216.35"]) }
+
+    assert_includes err.message, "93.184.216.35"
+  end
+
+  # index and total are what make fallback visible: a non-zero index only
+  # happens because an earlier address failed.
+  def test_observer_reports_every_dial_attempt_with_its_position
+    events   = []
+    observer = ->(event, data) { events << [event, data] }
+
+    dial_all(failing: ["93.184.216.34"], observer: observer)
+
+    dials     = events.filter_map { |event, data| data if event == :connect }
+    addresses = dials.map { |dial| dial.fetch(:address) }
+    positions = dials.map { |dial| [dial.fetch(:index), dial.fetch(:total)] }
+
+    assert_equal ["93.184.216.34", "93.184.216.35"], addresses
+    assert_equal [[0, 2], [1, 2]], positions
+    assert_equal "example.com", dials.first.fetch(:host)
+    assert_instance_of Errno::ECONNREFUSED, dials.first.fetch(:error)
+    assert_nil dials.last.fetch(:error)
+    assert_operator dials.last.fetch(:duration), :>=, 0
+    assert_operator dials.last.fetch(:duration), :<, 1
+  end
+
+  def test_observer_is_not_required_for_fallback
+    assert_equal ["93.184.216.34", "93.184.216.35"], dial_all(failing: ["93.184.216.34"], observer: nil)
+  end
+
+  # validate! raises rather than returning nothing, so this is unreachable
+  # today. The guard keeps a future change to that invariant from surfacing as
+  # a TypeError from `raise nil` instead of an HTTP::Error.
+  def test_connect_raises_a_connection_error_when_no_candidate_address_survives
+    blocklist     = HTTP::Blocklist.new(ALLOW_ALL)
+    socket        = fake(connect: nil, close: nil, closed?: false)
+    timeout_class = fake(new: socket)
+    options       = HTTP::Options.new(timeout_class: timeout_class, blocklist: blocklist)
+
+    blocklist.stub(:validate!, []) do
+      err = assert_raises(HTTP::ConnectionError) do
+        HTTP::Connection.new(build_req(uri: "http://example.com/"), options)
+      end
+
+      assert_includes err.message, "no address for example.com"
+    end
+  end
 end

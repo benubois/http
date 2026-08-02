@@ -174,13 +174,17 @@ module HTTP
     # @example Deciding per address
     #   HTTP.blocklist(deny: ->(address) { address.loopback? || address.private? })
     #
+    # @example Observing what the blocklist decided
+    #   HTTP.blocklist(deny: deny, observer: ->(event, data) { logger.info("#{event} #{data}") })
+    #
     # @param [Array<IPAddr, String>] entries address and hostname rules
     # @param [#call, nil] deny called with each resolved address, truthy blocks it
+    # @param [#call, nil] observer called with `:resolved` and `:connect` events
     # @return [HTTP::Session]
     # @see HTTP::Blocklist
     # @api public
-    def blocklist(*entries, deny: nil)
-      branch default_options.with_blocklist(entries: entries.flatten, deny: deny)
+    def blocklist(*entries, deny: nil, observer: nil)
+      branch default_options.with_blocklist(entries: entries.flatten, deny: deny, observer: observer)
     end
 
     # Make client follow redirects

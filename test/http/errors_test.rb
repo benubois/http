@@ -26,3 +26,27 @@ class HTTPStatusErrorTest < Minitest::Test
     assert_equal "Unexpected status code 404", error.message
   end
 end
+
+class HTTPBlockedHostErrorTest < Minitest::Test
+  cover "HTTP::BlockedHostError*"
+
+  # The detail is optional so the plain `raise BlockedHostError, "message"` form
+  # keeps working for anyone constructing one directly.
+  def test_detail_defaults_to_empty
+    err = HTTP::BlockedHostError.new("blocked host: example.com")
+
+    assert_equal "blocked host: example.com", err.message
+    assert_nil err.host
+    assert_empty err.addresses
+    assert_empty err.blocked
+  end
+
+  def test_carries_the_resolution_that_was_judged
+    err = HTTP::BlockedHostError.new("nope", host: "example.com", addresses: %w[10.0.0.1 93.184.216.34],
+                                             blocked: %w[10.0.0.1])
+
+    assert_equal "example.com", err.host
+    assert_equal %w[10.0.0.1 93.184.216.34], err.addresses
+    assert_equal %w[10.0.0.1], err.blocked
+  end
+end
