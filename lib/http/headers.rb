@@ -23,6 +23,11 @@ module HTTP
       # @return [Headers]
       # @api public
       def coerce(object)
+        # An existing Headers needs no conversion, just an unshared copy.
+        # Round-tripping it through to_h re-normalizes every name and merges
+        # values that share a normalized key across distinct wire names.
+        return object.dup if object.is_a?(self)
+
         object = if    object.respond_to?(:to_hash) then object.to_hash
                  elsif object.respond_to?(:to_h)    then object.to_h
                  elsif object.respond_to?(:to_a)    then object.to_a
