@@ -869,6 +869,35 @@ class HTTPHeadersTest < Minitest::Test
     assert_equal expected.sort, HTTP::Headers.coerce(hdrs).to_a.sort
   end
 
+  def test_coerce_returns_an_unshared_copy_of_a_headers_input
+    headers = HTTP::Headers.coerce("Set-Cookie" => "hoo=ray")
+
+    coerced = HTTP::Headers.coerce(headers)
+    coerced.add "Set-Cookie", "woo=hoo"
+
+    assert_equal [%w[Set-Cookie hoo=ray], %w[Set-Cookie woo=hoo]], coerced.to_a
+    assert_equal [%w[Set-Cookie hoo=ray]], headers.to_a
+  end
+
+  def test_coerce_preserves_distinct_wire_names_of_a_headers_input
+    headers = HTTP::Headers.new
+    headers.add "Set-Cookie", "hoo=ray"
+    headers.add "set_cookie", "woo=hoo"
+
+    assert_equal [%w[Set-Cookie hoo=ray], %w[set_cookie woo=hoo]], HTTP::Headers.coerce(headers).to_a
+  end
+
+  def test_coerce_returns_a_copy_of_a_headers_subclass_input
+    subclass = Class.new(HTTP::Headers)
+    headers = subclass.new
+    headers.add "Accept", "json"
+
+    coerced = HTTP::Headers.coerce(headers)
+
+    assert_instance_of subclass, coerced
+    assert_equal [%w[Accept json]], coerced.to_a
+  end
+
   def test_coerce_is_aliased_as_bracket
     result = HTTP::Headers["Content-Type" => "text/plain"]
 
